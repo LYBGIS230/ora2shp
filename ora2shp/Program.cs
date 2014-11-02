@@ -1,13 +1,30 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Data.OracleClient;
+using Oracle.DataAccess.Client;
 using System.IO;
 using MapTools;
 using orashpUtils;
+using sdogeom;
 
 namespace ora2shp
 {
+    public class GeoInfo
+    {
+        private decimal id;
+        public decimal Id
+        {
+            get { return id; }
+            set { id = value; }
+        }
+
+        private SdoGeometry geo;
+        public SdoGeometry Geo
+        {
+            get { return geo; }
+            set { geo = value; }
+        }
+    }
     internal class Program
     {
         private static DateTime tstart = DateTime.Now;
@@ -16,6 +33,78 @@ namespace ora2shp
         private static void Main(string[] args)
         {
             CreateShapeFile(args);
+            //test();
+        }
+
+       
+
+        public static void test()
+        {
+
+            OracleConnection con = new OracleConnection("user id=mams_dev;password=mams;data source=xe");
+            List<GeoInfo> geoInfoList = new List<GeoInfo>();
+            OracleCommand cmd = new OracleCommand();
+            cmd.Connection = con;
+            con.Open();
+            cmd.CommandType = CommandType.Text;
+            cmd.Parameters.Clear();
+            cmd.CommandText = " select sgs_id,shape from sdo_segments_all ";
+            
+            using (OracleDataReader readerGeoInfo = cmd.ExecuteReader())
+            {
+                while (readerGeoInfo.Read())
+                {
+                    GeoInfo geoInfo = new GeoInfo();
+                    if (!readerGeoInfo.IsDBNull(0))
+                    {
+                        geoInfo.Id = readerGeoInfo.GetDecimal(0);
+                    }
+                    if (!readerGeoInfo.IsDBNull(1))
+                    {
+                        geoInfo.Geo = (SdoGeometry)readerGeoInfo.GetValue(1);
+                        decimal[] coords = geoInfo.Geo.OrdinatesArray;
+                        for (int i = 0; i < coords.Length-1; i+=2)
+			            {
+			                if (i <= coords.Length-1)
+                                Console.WriteLine("X: " + coords[i].ToString() + " Y: " + coords[i+1]);
+			            }
+                    }
+                    geoInfoList.Add(geoInfo);
+                }
+                readerGeoInfo.Close();
+            }
+            con.Close();
+        }
+
+        private static List<GeoInfo> getGeomInfo(OracleConnection conn, string select, string spatial_column)
+        {
+            List<GeoInfo> geoInfoList = new List<GeoInfo>();
+            if (conn.State == ConnectionState.Closed)
+            { conn.Open(); }
+            OracleCommand cmd = new OracleCommand();
+            cmd.Connection = conn;
+            cmd.CommandType = CommandType.Text;
+            cmd.Parameters.Clear();
+            cmd.CommandText = select;
+
+            using (OracleDataReader readerGeoInfo = cmd.ExecuteReader())
+            {
+                while (readerGeoInfo.Read())
+                {
+                    GeoInfo geoInfo = new GeoInfo();
+                    if (!readerGeoInfo.IsDBNull(0))
+                    {
+                        geoInfo.Id = readerGeoInfo.GetDecimal(0);
+                    }
+                    if (!readerGeoInfo.IsDBNull(1))
+                    {
+                        geoInfo.Geo = (SdoGeometry)readerGeoInfo[spatial_column];
+                    }
+                    geoInfoList.Add(geoInfo);
+                }
+                readerGeoInfo.Close();
+            }
+            return geoInfoList;
         }
 
         public static void CreateShapeFile(string[] args)
@@ -30,6 +119,12 @@ namespace ora2shp
                 Console.ReadLine();
                 return;
             }
+            System.Reflection.Assembly assembly = System.Reflection.Assembly.GetExecutingAssembly();
+            string version = assembly.GetName().Version.ToString();
+            Console.Write("\nORA2SHP Oracle SDO to Shapefile Utility. Version: " + version+"\n");
+            Console.Write("====================================================================\n");
+
+
             string connectionstring = Utils.ParseConnectionString(args[0].ToString());
             string where_clause = string.Empty;
             try
@@ -39,23 +134,62 @@ namespace ora2shp
             catch (Exception)
             { }
 
+            if (where_clause != string.Empty)
+            {
+                if (!where_clause.ToUpper().StartsWith("WHERE"))
+                    where_clause = " where " + where_clause;
+            }
+
             string outShpFile = args[4].ToString();
+            string tab_name = args[1].ToString();
+            string pk_column = args[2].ToString();
+            string sdo_column = args[3].ToString();
             if (outShpFile.ToUpper().EndsWith(".SHP"))
                 outShpFile = outShpFile.Substring(0, outShpFile.Length - 4);
 
             OracleConnection oracon = new OracleConnection(connectionstring);
+            List<GeoInfo> lShpInfo = new List<GeoInfo>();
             try
             {
                 oracon.Open();
+                string selFirstShp = string.Empty;
+                if (where_clause== string.Empty)
+                    selFirstShp = "select " + args[2].ToString() + "," + args[3].ToString() + " from " + args[1] + " where rownum = 1";
+                else
+                    selFirstShp="select " + pk_column + ","+ sdo_column + " from " + tab_name + " " + where_clause + " and rownum = 1";
+                try
+                {
 
+
+                    lShpInfo = getGeomInfo(oracon, selFirstShp, sdo_column);
+                    if (lShpInfo.Count == 0)
+                    {
+                        Console.WriteLine("\nNo rows found it table {0}", args[1]);
+                        Console.ReadLine();
+                        oracon.Close(); oracon.Dispose();
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+
+                    Console.WriteLine("\nORA2SHP ERROR:\n" + ex.Message + "\n" + ex.StackTrace);
+                }
+                finally
+                {
+                    
+                }
                 //Check if its an SDO point geometry
-                isSdoPoint = isSDOPointType(oracon, args[1].ToString(), args[3].ToString());
+                GeoInfo geomInfo = lShpInfo[0];
+                isSdoPoint = isSDOPointType(geomInfo);
+
+                
 
                 //Initialize shape type
                 ShapeLib.ShapeType shpType = ShapeLib.ShapeType.Point;
                 try
                 {
-                    shpType = GetShapeType(oracon, args[1].ToString(), args[3].ToString());
+                    shpType = GetShapeType(geomInfo);
                 }
                 catch (Exception ex)
                 {
@@ -75,11 +209,11 @@ namespace ora2shp
                 string sqlselect = string.Empty;
                 if (where_clause == string.Empty)
                 {
-                    sqlselect = @"SELECT " + GetColumnNames(oracon, args[1].ToString()) + " from " + args[1].ToString();
+                    sqlselect = @"SELECT " + GetColumnNames(oracon, tab_name) + ", " + sdo_column +" from " + tab_name;
                 }
                 else
                 {
-                    sqlselect = @"SELECT " + GetColumnNames(oracon, args[1].ToString()) + " from " + args[1].ToString() + " where " + where_clause;
+                    sqlselect = @"SELECT " + GetColumnNames(oracon, tab_name) + ", " + sdo_column + " from " + tab_name + " " + where_clause;
                 }
 
                 OracleCommand command1 = oracon.CreateCommand();
@@ -169,12 +303,12 @@ namespace ora2shp
 
                 ShapeCreator sc = new ShapeCreator();
 
-                Dictionary<string, OraShape> allShp = sc.GetAllCoordinateArrays(oracon, args[1].ToString(), args[3].ToString(), args[2].ToString(), shpType, where_clause);
-                Dictionary<string, ShapePartInfo> allElemInfo = sc.GetAllElementInfo(oracon, args[1].ToString(), args[3].ToString(), args[2].ToString(), where_clause);
                 IntPtr pShp = new IntPtr();
-                Console.WriteLine("Converting shapes...");
+
+                
                 while (dr.Read())
                 {
+                    //Console.Write("Processing record ..." + iShape.ToString() +".");
                     pkValue = dr[args[2]].ToString();
 
                     OraShape shp = new OraShape();
@@ -182,7 +316,9 @@ namespace ora2shp
 
                     try
                     {
-                        shp = allShp[pkValue];
+                        GeoInfo geoInfo = new GeoInfo();
+                        geoInfo.Geo = (SdoGeometry)dr[sdo_column];
+                        shp = sc.getOraShape(geoInfo, shpType, Convert.ToInt32(dr[pk_column]));
                     }
                     catch (Exception)
                     {
@@ -193,15 +329,13 @@ namespace ora2shp
                     {
                         try
                         {
-                            shpInfo = allElemInfo[pkValue];
+                            shpInfo = sc.getShapePartInfo(geomInfo);
                         }
                         catch (Exception)
                         {
                             continue;
                         }
 
-                        //ShapePartInfo shpInfo = sc.GetElementInfo(oracon,args[1].ToString(), args[3].ToString(), args[2].ToString(), pkValue, pkValIsString);
-                        //shp = sc.CreateShape(oracon, args[1].ToString(), args[3].ToString(), args[2].ToString(), pkValue, pkValIsString, shpType);
                         shp.nParts = shpInfo.nParts;
                         shp.PartType = null;
                         shp.PartStarts = shpInfo.PartStarts;
@@ -224,7 +358,7 @@ namespace ora2shp
                     }
                     else
                     {
-                        shp = sc.CreatePointShape(oracon, args[1].ToString(), args[3].ToString(), args[2].ToString(), pkValue, pkValIsString, shpType);
+                        shp = sc.CreatePointShape(geomInfo, shpType, pkValue);
                         if (shpType == ShapeLib.ShapeType.PointM)
                             pShp = ShapeLib.SHPCreateObject(shpType, -1, 0, null, null, 1, shp.XList, shp.YList, null, shp.MList);
                         else if (shpType == ShapeLib.ShapeType.PointZ)
@@ -281,6 +415,7 @@ namespace ora2shp
                         }
                     }
                     iShape++;
+                    //dr.NextResult();
                 }
                 Console.WriteLine("Converted " + iShape.ToString() + " shapes in: " + (DateTime.Now - tstart).ToString());
 
@@ -290,7 +425,7 @@ namespace ora2shp
 
                 //Create projection file if needed
                 CreatePrjFile(oracon, args[1].ToString(), args[3].ToString(), outShpFile);
-                Console.Write("Done.\n");
+                //Console.Write("Done.\n");
                 Console.Write("\nCreated shapefile " + args[4].ToString() + " with " + iShape.ToString() + " records.\nTotal Elapsed Time: " + (DateTime.Now - tProgramstart).ToString() + "\nPress any key to exit.");
                 Console.ReadLine();
             }
@@ -307,33 +442,21 @@ namespace ora2shp
             }
         }
 
-        protected static bool isSDOPointType(OracleConnection oracon, string table_name, string shape_col)
-        {
-            //Console.Write("Determining shapetype....\n");
-            if (oracon.State == ConnectionState.Closed)
-            { oracon.Open(); }
-            string sqlstring = @"select to_char(s." + shape_col + ".SDO_POINT.X) from " + table_name + " s where rownum=1";
+        
 
-            OracleCommand command = oracon.CreateCommand();
-            command.CommandText = sqlstring;
-            string strTextX = command.ExecuteScalar().ToString();
-            if (strTextX.Trim() == string.Empty)
-            {
+        protected static bool isSDOPointType(GeoInfo geomInfo)
+        {
+            if (geomInfo.Geo.Point== null)
                 return false;
-            }
-            else return true;
+            else
+                return true;
         }
 
-        protected static ShapeLib.ShapeType GetShapeType(OracleConnection oracon, string table_name, string shape_col)
+        protected static ShapeLib.ShapeType GetShapeType(GeoInfo geomInfo)
         {
-            Console.Write("Determining shapetype....\n");
-            if (oracon.State == ConnectionState.Closed)
-            { oracon.Open(); }
-            string sqlstring = @"select to_char(s." + shape_col + ".SDO_GTYPE) from " + table_name + " s where rownum=1";
-
-            OracleCommand command = oracon.CreateCommand();
-            command.CommandText = sqlstring;
-            string strGType = command.ExecuteScalar().ToString();
+            //Console.Write("Determining shapetype....\n");
+           
+            string strGType = geomInfo.Geo.Sdo_Gtype.ToString();
 
             switch (strGType)
             {
@@ -364,7 +487,7 @@ namespace ora2shp
 
         protected static string GetColumnNames(OracleConnection oracon, string table_name)
         {
-            Console.Write("Determining column names....\n");
+            //Console.Write("Determining column names....\n");
             string strColNames = string.Empty;
 
             if (oracon.State == ConnectionState.Closed)
@@ -380,7 +503,8 @@ namespace ora2shp
                 strColNames = strColNames + "," + rd["column_name"].ToString();
             }
             strColNames = strColNames.Trim().TrimStart(',');
-            Console.Write("Done.\n");
+            //Console.Write("Done.\n");
+            command.Dispose();
             return strColNames;
         }
 

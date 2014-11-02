@@ -10,7 +10,7 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>sdo2shp</RootNamespace>
     <AssemblyName>ora2shp</AssemblyName>
-    <TargetFrameworkVersion>v2.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
     <TargetFrameworkProfile>
     </TargetFrameworkProfile>
     <FileAlignment>512</FileAlignment>
@@ -73,9 +73,12 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\..\DotNetForShapeLib\CreateShapefile\MapTools.dll</HintPath>
     </Reference>
+    <Reference Include="Oracle.DataAccess, Version=4.112.3.0, Culture=neutral, PublicKeyToken=89b483f429c47342, processorArchitecture=x86">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\oracle\product\11.2.0\client_1\odp.net\bin\4\Oracle.DataAccess.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />
-    <Reference Include="System.Data.OracleClient" />
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
@@ -120,6 +123,10 @@
     <ProjectReference Include="..\orashpUtils\orashpUtils.csproj">
       <Project>{48530D47-A08D-4558-8450-8CDBFB42F687}</Project>
       <Name>orashpUtils</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\sdogeom\sdogeom.csproj">
+      <Project>{7A01DC98-389B-4AC7-A543-1B2F12452E6D}</Project>
+      <Name>sdogeom</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
